@@ -1207,7 +1207,11 @@
 ];
 
 CREATE CONSTRAINT FreshCons IF NOT EXISTS FOR (n:Fresh) REQUIRE (n.min, n.max) IS UNIQUE;
-//CREATE INDEX NodeIndex IF NOT EXISTS FOR (n:Node) ON (n.removed);
+CREATE CONSTRAINT FreshTestCons IF NOT EXISTS FOR (n:FreshTest) REQUIRE (n.min, n.max) IS UNIQUE;
+CREATE INDEX FreshIndex IF NOT EXISTS FOR (n:Fresh) ON (n.removed);
+CREATE INDEX FreshTestIndex IF NOT EXISTS FOR (n:FreshTest) ON (n.removed);
+
+MATCH (f:FreshTest) DETACH DELETE f;
 
 WITH $test as data
 UNWIND data AS d
@@ -1215,12 +1219,12 @@ CALL (d) {
   WHEN d contains '-' THEN
     CALL(d) {
       WITH split(d, "-") as marks
-        MERGE (f:Fresh {min: toInteger(marks[0]), max: toInteger(marks[1]) })
+        MERGE (f:FreshTest {min: toInteger(marks[0]), max: toInteger(marks[1]) })
       RETURN 0 as result
     } return result
   WHEN size(d) > 0 THEN
     CALL(d) {
-      OPTIONAL MATCH (f:Fresh) WHERE toInteger(d) >= f.min and toInteger(d) <= f.max
+      OPTIONAL MATCH (f:FreshTest) WHERE toInteger(d) >= f.min and toInteger(d) <= f.max
       WITH count(f) as sum
       WITH CASE sum WHEN >0 THEN 1 ELSE 0 END as result
       return result
@@ -1251,3 +1255,60 @@ CALL (d) {
   ELSE return 0 as result
 } IN TRANSACTIONS OF 1 ROWS
 return sum(result)
+// 811
+
+// PART 2  test
+MATCH (n:FreshTest), (m:FreshTest)
+WHERE elementId(n) <> elementId(m) and n.removed is null and m.removed is null
+AND n.min >= m.min and m.max >= n.max
+SET n.removed = TRUE;
+//RETURN m.removed, elementId(m), m.min, n.min, n.max, m.max, elementId(n), n.removed;
+
+MATCH (n:FreshTest), (m:FreshTest)
+WHERE elementId(n) <> elementId(m) and n.removed is null and m.removed is null
+AND n.min <= m.min < n.max <= m.max
+MERGE (n)-[:CONNECTEDTEST]->(m);
+
+MATCH p=(f:FreshTest)-[:CONNECTEDTEST]-(f2:FreshTest) 
+CALL (p) {
+  UNWIND nodes(p) as n
+    WITH n, min(n.min) as rmin, max(n.max) as rmax
+    SET n.removed = True
+    //MERGE (ff:FreshTest {min: rmin, max: rmax})
+};
+
+MATCH p=(f:FreshTest) WHERE f.removed is null
+RETURN sum(f.max-f.min);
+
+// PART 2 full
+
+MATCH (f:Fresh) SET f.removed = null;
+MATCH ()-[r:CONNECTED]->() DELETE r;
+
+MATCH (n:Fresh), (m:Fresh)
+WHERE elementId(n) <> elementId(m) and n.removed is null and m.removed is null
+AND n.min >= m.min and m.max >= n.max
+SET n.removed = TRUE
+MERGE (n)<-[:WAS_REMOVED_FROM]-(m);
+//RETURN m.removed, elementId(m), m.min, n.min, n.max, m.max, elementId(n), n.removed
+
+MATCH (n:Fresh), (m:Fresh)
+WHERE elementId(n) <> elementId(m) and n.removed is null and m.removed is null
+AND (n.min <= m.min < n.max <= m.max) 
+MERGE (n)-[:CONNECTED]->(m);
+
+CALL () {
+MATCH (f:Fresh)
+where f.removed is null
+AND NOT EXISTS { MATCH (f)-[:CONNECTED]->() }
+AND NOT EXISTS { MATCH ()-[:CONNECTED]->(f) } return sum(f.max-f.min+1) as AA
+UNION
+MATCH (f:Fresh)-[:CONNECTED]->+(f2:Fresh)
+where f.removed is null and f2.removed is null
+AND NOT EXISTS { MATCH ()-[:CONNECTED]->(f) }
+AND NOT EXISTS { MATCH (f2)-[:CONNECTED]->() }
+return sum(f2.max - f.min+1)  as AA
+}
+return sum(AA)
+// Too low 341149117758781
+
